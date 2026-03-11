@@ -441,7 +441,7 @@ def init_db():
 
     # Usuários de exemplo
     for nome, email, senha, cargo, m_atual, m_total in [
-        ("Gustavo", "admin@empresa.com", "senha572011",  "Assistente Administrativo",  0, 0),
+        ("Gustavo", "gustavo.venturini.soares@gmail.com", "senha572011",  "Assistente Administrativo",  0, 0),
         ("Agnaldo", "admin@empresa.com", "99551264",  "Ajudante de Entrega",  0, 0),
         ("Leiliane", "admin@empresa.com", "camila",  "Vendedora",  7500, 10000),
         ("Brenda", "admin@empresa.com", "2007",  "Operador de Caixa",  0, 0),
