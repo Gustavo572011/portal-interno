@@ -10,7 +10,11 @@ import sqlite3
 import hashlib
 import os
 from datetime import datetime, date
-import pytz  # pip install pytz  (já vem com streamlit cloud)
+try:
+    import pytz
+    _HAS_PYTZ = True
+except ImportError:
+    _HAS_PYTZ = False
 
 # ══════════════════════════════════════════════════════════════
 # ██  CONFIGURAÇÕES — EDITE AQUI  ██████████████████████████████
@@ -19,10 +23,10 @@ import pytz  # pip install pytz  (já vem com streamlit cloud)
 # 🔗 ID da planilha Google Sheets com informações dos funcionários
 # Como obter: abra a planilha → copie o ID da URL:
 # https://docs.google.com/spreadsheets/d/ >>> COLE_O_ID_AQUI <<< /edit
-GOOGLE_SHEETS_ID = "1bygdJMOHvuYyeieKRkMtmHY5jUz-JduhFx5umNQ_t6g"           # ← cole o ID da sua planilha aqui
+GOOGLE_SHEETS_ID = "1TbyUlf9wZGbQ3jyhj-QdpnHlNSd6GXHVYZCfdmVGXnM"           # ← cole o ID da sua planilha aqui
 
 # 📋 Nome da aba (sheet) dentro da planilha que contém os dados
-GOOGLE_SHEETS_ABA = "DADOS"
+GOOGLE_SHEETS_ABA = "usuario"
 
 # 💬 Link do WhatsApp para envio de documentos ao RH
 WHATSAPP_LINK = "https://wa.link/ng5osg"
@@ -67,7 +71,7 @@ MESES_PT = ["janeiro","fevereiro","março","abril","maio","junho",
 # CONFIGURAÇÃO DA PÁGINA
 # ══════════════════════════════════════════════════════════════
 st.set_page_config(
-    page_title=portal-interno,
+    page_title=NOME_EMPRESA,
     page_icon="🏢",
     layout="wide",
     initial_sidebar_state="auto"
@@ -618,8 +622,8 @@ init_db()
 def verificar_horario_servico():
     """Retorna (permitido: bool, motivo: str)"""
     try:
-        tz  = pytz.timezone(TIMEZONE)
-        now = datetime.now(tz)
+        tz  = pytz.timezone(TIMEZONE) if _HAS_PYTZ else None
+        now = datetime.now(tz) if tz else datetime.now()
     except Exception:
         now = datetime.now()
 
@@ -692,8 +696,8 @@ if "page" not in st.session_state:
 # ══════════════════════════════════════════════════════════════
 def render_login():
     try:
-        tz  = pytz.timezone(TIMEZONE)
-        now = datetime.now(tz)
+        tz  = pytz.timezone(TIMEZONE) if _HAS_PYTZ else None
+        now = datetime.now(tz) if tz else datetime.now()
     except Exception:
         now = datetime.now()
 
@@ -746,8 +750,8 @@ def render_login():
 # ══════════════════════════════════════════════════════════════
 def render_relogio_bar():
     try:
-        tz  = pytz.timezone(TIMEZONE)
-        now = datetime.now(tz)
+        tz  = pytz.timezone(TIMEZONE) if _HAS_PYTZ else None
+        now = datetime.now(tz) if tz else datetime.now()
     except Exception:
         now = datetime.now()
 
@@ -1021,8 +1025,8 @@ user = st.session_state.user
 # ── Sidebar (desktop) ──────────────────────────────────────
 with st.sidebar:
     try:
-        tz  = pytz.timezone(TIMEZONE)
-        now = datetime.now(tz)
+        tz  = pytz.timezone(TIMEZONE) if _HAS_PYTZ else None
+        now = datetime.now(tz) if tz else datetime.now()
     except Exception:
         now = datetime.now()
     hora_fmt = now.strftime("%H:%M:%S")
