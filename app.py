@@ -442,24 +442,24 @@ def init_db():
     # Usuários de exemplo
     for nome, email, senha, cargo, m_atual, m_total in [
         ("Gustavo", "gustavo.venturini.soares@gmail.com", "senha572011",  "Assistente Administrativo",  0, 0),
-        ("Agnaldo", "admin@empresa.com", "99551264",  "Ajudante de Entrega",  0, 0),
-        ("Leiliane", "admin@empresa.com", "camila",  "Vendedora",  7500, 10000),
-        ("Brenda", "admin@empresa.com", "2007",  "Operador de Caixa",  0, 0),
-        ("Riquele", "admin@empresa.com", "riquele24",  "Zeladora",  0, 0),
-        ("Rogério", "admin@empresa.com", "290580",  "Motorista",  0, 0),
-        ("Wagner", "admin@empresa.com", "wagner007",  "Assistente Administrativo",  0, 0),
-        ("Samuel", "admin@empresa.com", "Sophia2710",  "Serrador",  0, 0),
-        ("Sueli", "admin@empresa.com",  "maria1819",    "Vendedora", 4200,  8000),
-        ("Valdinei", "admin@empresa.com",  "123456",    "Surpevisor de Pátio", 0,  0),
-        ("Paulo", "admin@empresa.com",  "123456",    "Auxiliar de Produção", 0,  0),
-        ("Karen", "admin@empresa.com",  "123456",    "Gerente", 0,  0),
+        ("Sueli", "@gmail.com", "senha572011",  "Vendedora",  0, 50000),
+        ("Leiliane", "@gmail.com", "senha572011",  "Vendedora",  0, 50000),
+        ("Brenda", "@gmail.com", "senha572011",  "Operador de Caixa",  0, 0),
+        ("Riquele", "@gmail.com", "senha572011",  "Zeladora",  0, 0),
+        ("Wagner", "@gmail.com", "senha572011",  "Assistente Administrativo",  0, 0),
+        ("Samuel", "@gmail.com", "senha572011",  "Serrador",  0, 0),
+        ("Agnaldo", "@gmail.com", "senha572011",  "Ajudante de Entrega",  0, 0),
+        ("Paulo", "@gmail.com", "senha572011",  "Auxiliar de Produção",  0, 0),
+        ("Rogério", "@gmail.com", "senha572011",  "Motorista",  0, 0),
+        ("Valdinei", "@gmail.com", "senha572011",  "Supervisor de Pátio",  0, 0),
+        ("Karen", "karensteinwandt7@gmail.com",  "123456",    "Gerente", 0,  0),
     ]:
         h = hashlib.sha256(senha.encode()).hexdigest()
         c.execute("INSERT OR IGNORE INTO usuarios (nome,email,senha,cargo,meta_atual,meta_total) VALUES (?,?,?,?,?,?)",
                   (nome, email, h, cargo, m_atual, m_total))
 
     # Avisos de exemplo
-    c.execute("INSERT OR IGNORE INTO avisos (id,titulo,corpo,tipo) VALUES (1,'🎉 Reunião Mensal','Reunião de alinhamento na sexta-feira às 14h na sala de reuniões.','info')")
+    c.execute("INSERT OR IGNORE INTO avisos (id,titulo,corpo,tipo) VALUES (1,'Nenhum Aviso Primario Definido','Nenhum aviso Primário está definido no momento.','info')")
     c.execute("INSERT OR IGNORE INTO avisos (id,titulo,corpo,tipo) VALUES (2,'⚠️ Prazo de Metas','O fechamento do mês ocorre dia 30. Atenção ao cumprimento das metas!','warning')")
 
     conn.commit()
@@ -561,39 +561,20 @@ def render_login():
     </div>
     """, unsafe_allow_html=True)
 
-    tab1, tab2 = st.tabs(["📧  E-mail & Senha"])
+    email = st.text_input("E-mail", placeholder="seu@empresa.com", key="l_email")
+    senha = st.text_input("Senha", type="password", placeholder="••••••••", key="l_senha")
 
-    with tab1:
-        email = st.text_input("E-mail", placeholder="seu@gmail.com", key="l_email")
-        senha = st.text_input("Senha", type="password", placeholder="••••••••", key="l_senha")
-
-        if st.button("Entrar →", use_container_width=True, key="btn_entrar"):
-            if not email or not senha:
-                st.error("Preencha e-mail e senha.")
+    if st.button("Entrar →", use_container_width=True, key="btn_entrar"):
+        if not email or not senha:
+            st.error("Preencha e-mail e senha.")
+        else:
+            user = db_get_user(email)
+            if user and user.get("senha") == hashlib.sha256(senha.encode()).hexdigest():
+                st.session_state.logged_in = True
+                st.session_state.user = user
+                st.rerun()
             else:
-                user = db_get_user(email)
-                if user and user.get("senha") == hashlib.sha256(senha.encode()).hexdigest():
-                    st.session_state.logged_in = True
-                    st.session_state.user = user
-                    st.rerun()
-                else:
-                    st.error("E-mail ou senha incorretos.")
-
-                )
-                auth.check_authentification()
-                if st.session_state.get("connected"):
-                    info = st.session_state.get("user_info", {})
-                    user = db_get_user(info.get("email"))
-                    if not user:
-                        st.warning("E-mail não cadastrado. Fale com o administrador.")
-                    else:
-                        st.session_state.logged_in = True
-                        st.session_state.user = user
-                        st.rerun()
-                else:
-                    auth.login()
-        except ImportError:
-            pass
+                st.error("E-mail ou senha incorretos.")
 
     st.markdown('</div>', unsafe_allow_html=True)
     st.markdown("""
