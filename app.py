@@ -452,7 +452,7 @@ def init_db():
         ("Paulo", "@gmail.com", "senha572011",  "Auxiliar de Produção",  0, 0),
         ("Rogério", "@gmail.com", "senha572011",  "Motorista",  0, 0),
         ("Valdinei", "@gmail.com", "senha572011",  "Supervisor de Pátio",  0, 0),
-        ("Karen", "karensteinwandt7@gmail.com",  "123456",    "Gerente", 0,  0),
+        ("Karen", "karensteinwandt7@gmail.com",  "stein2025#",    "Gerente", 0,  0),
     ]:
         h = hashlib.sha256(senha.encode()).hexdigest()
         c.execute("INSERT OR IGNORE INTO usuarios (nome,email,senha,cargo,meta_atual,meta_total) VALUES (?,?,?,?,?,?)",
