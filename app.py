@@ -561,10 +561,10 @@ def render_login():
     </div>
     """, unsafe_allow_html=True)
 
-    tab1, tab2 = st.tabs(["📧  E-mail & Senha", "🔵  Google"])
+    tab1, tab2 = st.tabs(["📧  E-mail & Senha"])
 
     with tab1:
-        email = st.text_input("E-mail", placeholder="seu@empresa.com", key="l_email")
+        email = st.text_input("E-mail", placeholder="seu@gmail.com", key="l_email")
         senha = st.text_input("Senha", type="password", placeholder="••••••••", key="l_senha")
 
         if st.button("Entrar →", use_container_width=True, key="btn_entrar"):
@@ -579,31 +579,6 @@ def render_login():
                 else:
                     st.error("E-mail ou senha incorretos.")
 
-    with tab2:
-        st.markdown("""
-        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);
-                    padding:1.1rem 1.3rem;font-size:0.85rem;color:var(--txt1);line-height:1.75;">
-            Para ativar o login com Google, instale o pacote e configure as credenciais OAuth 2.0:<br><br>
-            <code style="background:rgba(79,142,247,0.12);color:var(--accent2);padding:0.1rem 0.4rem;border-radius:5px;font-family:var(--mono)">
-            pip install streamlit-google-auth</code><br><br>
-            Em seguida adicione ao seu <code style="background:rgba(79,142,247,0.12);color:var(--accent2);padding:0.1rem 0.4rem;border-radius:5px;font-family:var(--mono)">.env</code>:<br>
-            <code style="background:rgba(79,142,247,0.12);color:var(--accent2);padding:0.1rem 0.4rem;border-radius:5px;font-family:var(--mono)">
-            GOOGLE_CLIENT_ID</code> e
-            <code style="background:rgba(79,142,247,0.12);color:var(--accent2);padding:0.1rem 0.4rem;border-radius:5px;font-family:var(--mono)">
-            GOOGLE_CLIENT_SECRET</code>
-        </div>
-        """, unsafe_allow_html=True)
-
-        try:
-            from streamlit_google_auth import Authenticate
-            cid = os.getenv("GOOGLE_CLIENT_ID", "")
-            csecret = os.getenv("GOOGLE_CLIENT_SECRET", "")
-            if cid and csecret:
-                auth = Authenticate(
-                    secret_credentials_path=None,
-                    cookie_name="portal_interno",
-                    cookie_key=os.getenv("SECRET_KEY", "secret"),
-                    redirect_uri=os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8501"),
                 )
                 auth.check_authentification()
                 if st.session_state.get("connected"):
