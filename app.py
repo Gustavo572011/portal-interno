@@ -67,7 +67,7 @@ MESES_PT = ["janeiro","fevereiro","março","abril","maio","junho",
 # CONFIGURAÇÃO DA PÁGINA
 # ══════════════════════════════════════════════════════════════
 st.set_page_config(
-    page_title=comstrukasa,
+    page_title=portal-interno,
     page_icon="🏢",
     layout="wide",
     initial_sidebar_state="auto"
