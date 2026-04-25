@@ -1,786 +1,119 @@
-# PORTAL INTERNO — COMSTRUKASA
-# pip install streamlit gspread google-auth
-# streamlit run app.py
-
 import streamlit as st
-import sqlite3, hashlib, os
-from datetime import datetime, date
+from datetime import datetime
+import time
 
-try:
-    import pytz; _HAS_PYTZ = True
-except ImportError:
-    _HAS_PYTZ = False
+# Configuração da página
+st.set_page_config(page_title="Portal COMSTRUKASA", page_icon="🏗️", layout="centered")
 
-try:
-    import gspread
-    from google.oauth2.service_account import Credentials
-    _HAS_GSPREAD = True
-except ImportError:
-    _HAS_GSPREAD = False
+# Estilização Customizada (CSS para animações e botões)
+st.markdown("""
+    <style>
+    .main { opacity: 0; animation: fadeIn 1.5s forwards; }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    .stButton>button { width: 100%; border-radius: 20px; transition: 0.3s; }
+    .stButton>button:hover { transform: scale(1.02); }
+    </style>
+""", unsafe_allow_html=True)
 
-# ══════════════════════════════════════════════════════════════
-# ██  CONFIGURAÇÕES — EDITE AQUI
-# ══════════════════════════════════════════════════════════════
-GOOGLE_SHEETS_ID  = "1TbyUlf9wZGbQ3jyhj-QdpnHlNSd6GXHVYZCfdmVGXnM"            # ← Cole o ID da planilha aqui
-WHATSAPP_RH       = "https://wa.link/ng5osg"   # RH (envio de docs)
-WHATSAPP_SUPORTE  = "https://wa.link/fvnopv"   # Suporte técnico (login)
-NOME_EMPRESA      = "COMSTRUKASA"
-TIMEZONE          = "America/Sao_Paulo"
-HORARIO_SEG_SEX   = (7, 45, 19, 0)
-HORARIO_SAB       = (7, 45, 13, 0)
-
-# Abas da planilha Google Sheets
-ABA_USUARIOS  = "usuarios"   # colunas: nome | senha | cargo | meta_atual | meta_total
-ABA_NIVEL     = "nivel"      # colunas: nome | nivel  (adm ou user)
-ABA_FALTAS    = "faltas"     # colunas: nome | data | motivo | justificado
-ABA_HOLERITES = "holerites"  # colunas: nome | mes | salario | observacao
-
-# ══════════════════════════════════════════════════════════════
-DB_PATH  = "portal.db"
-DIAS_PT  = ["Segunda","Terça","Quarta","Quinta","Sexta","Sábado","Domingo"]
-MESES_PT = ["janeiro","fevereiro","março","abril","maio","junho",
-            "julho","agosto","setembro","outubro","novembro","dezembro"]
-TIPOS_DOC = ["Atestado Médico","Declaração","Comprovante de Endereço",
-             "Documento Pessoal (RG/CPF)","Comprovante de Escolaridade","Contrato","Outros"]
-CAMPOS_PONTO = [
-    ("entrada","🟢 Entrada","Registrar Entrada"),
-    ("saida_almoco","🍽️ Saída Almoço","Saída Almoço"),
-    ("retorno_almoco","↩️ Retorno Almoço","Retorno Almoço"),
-    ("saida_cafe","☕ Saída Café","Saída Café"),
-    ("retorno_cafe","↩️ Retorno Café","Retorno Café"),
-    ("saida","🔴 Saída","Registrar Saída"),
-]
-
-st.set_page_config(page_title=NOME_EMPRESA, page_icon="🏗️",
-                   layout="wide", initial_sidebar_state="auto")
-
-# ══════════════════════════════════════════════════════════════
-# TEMPO
-# ══════════════════════════════════════════════════════════════
-def agora_local():
-    try:
-        if _HAS_PYTZ:
-            return datetime.now(pytz.timezone(TIMEZONE))
-    except Exception: pass
-    return datetime.now()
+# Banco de dados simulado
+users = {
+    "stein25": {"nome": "Karen", "tipo": "adm", "cargo": "Gerente", "salario": "R$ 5.500", "meta": "N/A"},
+    "soares": {"nome": "Valdinei", "tipo": "adm", "cargo": "Supervisor de Pátio", "salario": "R$ 4.200", "meta": "N/A"},
+    "572011": {"nome": "Gustavo", "tipo": "adm", "cargo": "Assist. Administrativo", "salario": "R$ 2.800", "meta": "N/A"},
+    "maria1819": {"nome": "Sueli", "tipo": "user", "cargo": "Vendedora", "salario": "R$ 2.500", "meta": "R$ 50.000"},
+    "camila": {"nome": "Leiliane", "tipo": "user", "cargo": "Vendedora", "salario": "R$ 2.500", "meta": "R$ 50.000"},
+    "riquele24": {"nome": "Riquele", "tipo": "user", "cargo": "Zeladora", "salario": "R$ 1.800", "meta": "N/A"},
+    "wagner007": {"nome": "Wagner", "tipo": "user", "cargo": "Assist. Administrativo", "salario": "R$ 2.500", "meta": "N/A"},
+    "99551264": {"nome": "Agnaldo", "tipo": "user", "cargo": "Aux. de Produção", "salario": "R$ 2.100", "meta": "N/A"},
+    "290580": {"nome": "Rogério", "tipo": "user", "cargo": "Motorista", "salario": "R$ 2.600", "meta": "N/A"},
+    "sophia2710": {"nome": "Samuel", "tipo": "user", "cargo": "Serrador", "salario": "R$ 2.300", "meta": "N/A"},
+}
 
 def verificar_horario():
-    now = agora_local()
-    dow = now.weekday(); hm = now.hour*60+now.minute
-    def prox(d,h): return f"{DIAS_PT[d]} às {h[0]:02d}:{h[1]:02d}"
-    if dow < 5:
-        ini=HORARIO_SEG_SEX[0]*60+HORARIO_SEG_SEX[1]; fim=HORARIO_SEG_SEX[2]*60+HORARIO_SEG_SEX[3]
-        if ini<=hm<=fim: return True,"",""
-        if hm<ini: return False,"antes",f"hoje às {HORARIO_SEG_SEX[0]:02d}:{HORARIO_SEG_SEX[1]:02d}"
-        nd=(dow+1)%7
-        if nd<5: return False,"depois",prox(nd,HORARIO_SEG_SEX)
-        elif nd==5: return False,"depois",prox(nd,HORARIO_SAB)
-        return False,"depois",f"Segunda-feira às {HORARIO_SEG_SEX[0]:02d}:{HORARIO_SEG_SEX[1]:02d}"
-    elif dow==5:
-        ini=HORARIO_SAB[0]*60+HORARIO_SAB[1]; fim=HORARIO_SAB[2]*60+HORARIO_SAB[3]
-        if ini<=hm<=fim: return True,"",""
-        if hm<ini: return False,"antes",f"hoje às {HORARIO_SAB[0]:02d}:{HORARIO_SAB[1]:02d}"
-        return False,"depois",f"Segunda-feira às {HORARIO_SEG_SEX[0]:02d}:{HORARIO_SEG_SEX[1]:02d}"
-    return False,"domingo",f"Segunda-feira às {HORARIO_SEG_SEX[0]:02d}:{HORARIO_SEG_SEX[1]:02d}"
+    agora = datetime.now()
+    dia_semana = agora.weekday() # 0=Segunda, 5=Sábado, 6=Domingo
+    hora_atual = agora.time()
+    
+    inicio = datetime.strptime("07:45", "%H:%M").time()
+    fim_semana = datetime.strptime("19:00", "%H:%M").time()
+    fim_sabado = datetime.strptime("13:00", "%H:%M").time()
 
-# ══════════════════════════════════════════════════════════════
-# GOOGLE SHEETS — leitura das abas (cache 2 min)
-# ══════════════════════════════════════════════════════════════
-@st.cache_data(ttl=120, show_spinner=False)
-def _gs_ler(sheet_id, aba):
-    """Retorna lista de dicts ou None em caso de erro."""
-    if not sheet_id or not _HAS_GSPREAD:
-        return None
-    try:
-        info = st.secrets.get("gcp_service_account", None)
-        if not info:
-            return None
-        creds = Credentials.from_service_account_info(
-            dict(info),
-            scopes=["https://www.googleapis.com/auth/spreadsheets.readonly"]
-        )
-        ws = gspread.authorize(creds).open_by_key(sheet_id).worksheet(aba)
-        return ws.get_all_records()
-    except Exception:
-        return None
+    if dia_semana < 5: # Seg a Sex
+        return inicio <= hora_atual <= fim_semana
+    elif dia_semana == 5: # Sábado
+        return inicio <= hora_atual <= fim_sabado
+    return False
 
-def _nome_eq(a, b):
-    return str(a).strip().lower() == str(b).strip().lower()
+# Lógica de Login
+if 'logged_in' not in st.session_state:
+    st.session_state.logged_in = False
+    st.session_state.user_data = None
 
-def gs_login(nome_digitado, senha_digitada):
-    """
-    Aba 'usuarios': nome | senha | cargo | meta_atual | meta_total
-    Compara nome E senha (texto puro — defina senha simples na planilha).
-    Retorna dict com dados do usuário ou None.
-    """
-    rows = _gs_ler(GOOGLE_SHEETS_ID, ABA_USUARIOS)
-    if not rows:
-        return None
-    for r in rows:
-        if _nome_eq(r.get("nome",""), nome_digitado) and \
-           str(r.get("senha","")).strip() == senha_digitada.strip():
-            def _f(v):
-                try: return float(str(v).replace(",",".").replace("R$","").strip())
-                except: return 0.0
-            return {
-                "nome":       str(r.get("nome","")),
-                "cargo":      str(r.get("cargo","Funcionário")),
-                "meta_atual": _f(r.get("meta_atual", 0)),
-                "meta_total": _f(r.get("meta_total", 0)),
-            }
-    return None
-
-def gs_nivel(nome):
-    """Aba 'nivel': nome | nivel  →  retorna 'adm' ou 'user'."""
-    rows = _gs_ler(GOOGLE_SHEETS_ID, ABA_NIVEL)
-    if not rows:
-        return "user"
-    for r in rows:
-        if _nome_eq(r.get("nome",""), nome):
-            return str(r.get("nivel","user")).strip().lower()
-    return "user"
-
-def gs_faltas(nome):
-    """Aba 'faltas': nome | data | motivo | justificado → lista filtrada."""
-    rows = _gs_ler(GOOGLE_SHEETS_ID, ABA_FALTAS)
-    if not rows:
-        return []
-    return [r for r in rows if _nome_eq(r.get("nome",""), nome)]
-
-def gs_holerites(nome):
-    """Aba 'holerites': nome | mes | salario | observacao → lista filtrada."""
-    rows = _gs_ler(GOOGLE_SHEETS_ID, ABA_HOLERITES)
-    if not rows:
-        return []
-    return [r for r in rows if _nome_eq(r.get("nome",""), nome)]
-
-# ══════════════════════════════════════════════════════════════
-# RELÓGIO — JS injetado direto no DOM principal via st.markdown
-# ══════════════════════════════════════════════════════════════
-CLOCK_JS = """
-<script id="portal-clock-script">
-(function(){
-  var dias=['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'];
-  var meses=['janeiro','fevereiro','março','abril','maio','junho',
-             'julho','agosto','setembro','outubro','novembro','dezembro'];
-  function pad(n){return String(n).padStart(2,'0');}
-
-  function tick(){
-    var n=new Date();
-    var t=pad(n.getHours())+':'+pad(n.getMinutes())+':'+pad(n.getSeconds());
-    var d=dias[n.getDay()]+', '+n.getDate()+' de '+meses[n.getMonth()]+' de '+n.getFullYear();
-    var ds=dias[n.getDay()].substring(0,3)+' '+pad(n.getDate())+'/'+pad(n.getMonth()+1)+'/'+n.getFullYear();
-    // Atualiza todos os alvos de relógio na página (estão no DOM principal, não em iframe)
-    document.querySelectorAll('[data-clock="time"]').forEach(function(el){el.textContent=t;});
-    document.querySelectorAll('[data-clock="date"]').forEach(function(el){el.textContent=d;});
-    document.querySelectorAll('[data-clock="date-short"]').forEach(function(el){el.textContent=ds;});
-  }
-
-  // Inicia imediatamente
-  if(!window._portalClockRunning){
-    window._portalClockRunning=true;
-    tick();
-    setInterval(tick,1000);
-  }
-})();
-</script>
-"""
-
-# Placeholder HTML para o relógio — o JS preenche via data-clock attrs
-def clock_bar_html():
-    """Barra de relógio para topo das páginas internas."""
-    return f"""
-<div style="display:flex;align-items:center;justify-content:flex-end;gap:12px;
-     padding:4px 0 18px;border-bottom:1px solid rgba(255,255,255,.07);margin-bottom:4px;">
-  <span data-clock="date" style="font-size:.83rem;color:#8b9ab8;">Carregando...</span>
-  <span data-clock="time" style="font-family:'DM Mono',monospace;font-size:1.1rem;font-weight:700;
-    color:#7eb3ff;background:rgba(79,142,247,.1);border:1px solid rgba(79,142,247,.2);
-    padding:3px 14px;border-radius:8px;letter-spacing:.04em;min-width:95px;text-align:center;">
-    --:--:--
-  </span>
-</div>
-{CLOCK_JS}
-"""
-
-def clock_login_html():
-    """Relógio grande para login."""
-    return f"""
-<div style="text-align:center;padding:.75rem 0 .25rem;">
-  <span data-clock="time" style="font-family:'DM Mono',monospace;font-size:2.4rem;font-weight:800;
-    color:#7eb3ff;letter-spacing:.06em;display:block;">--:--:--</span>
-  <span data-clock="date" style="font-size:.83rem;color:#8b9ab8;margin-top:5px;display:block;">Carregando...</span>
-</div>
-{CLOCK_JS}
-"""
-
-def clock_sidebar_html():
-    return f"""
-<div style="margin:10px 0 4px;background:#131929;border:1px solid rgba(255,255,255,.07);
-     border-radius:12px;padding:10px 14px;text-align:center;">
-  <span data-clock="time" style="font-family:'DM Mono',monospace;font-size:1.35rem;font-weight:700;
-    color:#7eb3ff;letter-spacing:.05em;display:block;">--:--:--</span>
-  <span data-clock="date-short" style="font-size:.7rem;color:#8b9ab8;margin-top:3px;display:block;">...</span>
-</div>
-{CLOCK_JS}
-"""
-
-def clock_ponto_html():
-    return f"""
-<div style="background:#131929;border:1px solid rgba(255,255,255,.07);border-radius:18px;
-     padding:12px 18px;display:flex;align-items:center;gap:10px;">
-  <span style="font-size:.85rem;font-weight:600;color:#8b9ab8;">⏱️ Agora:</span>
-  <span data-clock="time" style="font-family:'DM Mono',monospace;font-size:1.3rem;font-weight:700;
-    color:#7eb3ff;letter-spacing:.04em;">--:--:--</span>
-</div>
-{CLOCK_JS}
-"""
-
-def clock_bloqueio_html():
-    return f"""
-<span data-clock="time" style="font-family:'DM Mono',monospace;font-size:3rem;font-weight:800;
-  color:rgba(248,113,113,.32);letter-spacing:.08em;display:block;text-align:center;
-  margin:1.25rem 0 .25rem;">--:--:--</span>
-{CLOCK_JS}
-"""
-
-
-# ══════════════════════════════════════════════════════════════
-# CSS
-# ══════════════════════════════════════════════════════════════
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap');
-:root{
-  --bg0:#080c14;--bg1:#0e1420;--bg2:#131929;--bg3:#1a2236;
-  --border:rgba(255,255,255,0.07);--border2:rgba(255,255,255,0.12);
-  --accent:#4f8ef7;--accent2:#7eb3ff;--green:#34d399;--amber:#fbbf24;--red:#f87171;
-  --txt0:#f0f4ff;--txt1:#8b9ab8;--txt2:#4a5568;
-  --r:12px;--r2:18px;--font:'Plus Jakarta Sans',sans-serif;--mono:'DM Mono',monospace;
-}
-html,body,[class*="css"]{font-family:var(--font)!important;background:var(--bg0)!important;color:var(--txt0)!important;}
-#MainMenu,footer,header{visibility:hidden;}
-.stDeployButton,[data-testid="stToolbar"]{display:none!important;}
-.main .block-container{padding:1.5rem 1.5rem 5.5rem!important;max-width:1100px!important;}
-
-[data-testid="stSidebar"]{background:var(--bg1)!important;border-right:1px solid var(--border)!important;min-width:230px!important;max-width:230px!important;}
-[data-testid="stSidebar"]>div{padding-top:0!important;}
-.sb-top{background:linear-gradient(160deg,#1a2a4a 0%,var(--bg1) 100%);padding:1.75rem 1.25rem 1rem;border-bottom:1px solid var(--border);margin-bottom:.4rem;}
-.sb-av{width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,var(--accent),#7c3aed);color:white;font-size:1.4rem;font-weight:800;display:flex;align-items:center;justify-content:center;margin-bottom:.65rem;box-shadow:0 0 0 3px rgba(79,142,247,.2),0 6px 16px rgba(0,0,0,.4);}
-.sb-name{font-size:.92rem;font-weight:700;color:var(--txt0);margin-bottom:.2rem;}
-.sb-role{font-size:.7rem;font-weight:600;color:var(--accent2);background:rgba(79,142,247,.12);border:1px solid rgba(79,142,247,.2);padding:.15rem .5rem;border-radius:20px;display:inline-block;}
-[data-testid="stSidebar"] [data-testid="stRadio"]>div{gap:.15rem!important;}
-[data-testid="stSidebar"] [data-testid="stRadio"] label{background:transparent!important;border:none!important;padding:.6rem 1.1rem!important;border-radius:10px!important;font-size:.9rem!important;font-weight:500!important;color:var(--txt1)!important;transition:all .15s!important;margin:.05rem .4rem!important;}
-[data-testid="stSidebar"] [data-testid="stRadio"] label:hover{background:rgba(255,255,255,.05)!important;color:var(--txt0)!important;}
-
-.stButton>button{background:var(--accent)!important;color:white!important;border:none!important;border-radius:var(--r)!important;font-family:var(--font)!important;font-weight:600!important;font-size:.88rem!important;padding:.55rem 1.1rem!important;transition:all .18s!important;box-shadow:0 3px 12px rgba(79,142,247,.22)!important;width:100%!important;}
-.stButton>button:hover{background:var(--accent2)!important;transform:translateY(-1px)!important;}
-.stButton>button:disabled{background:var(--bg3)!important;color:var(--txt2)!important;box-shadow:none!important;transform:none!important;}
-.btn-logout .stButton>button{background:transparent!important;border:1px solid var(--border2)!important;color:var(--txt1)!important;box-shadow:none!important;}
-.btn-logout .stButton>button:hover{background:rgba(248,113,113,.08)!important;border-color:var(--red)!important;color:var(--red)!important;transform:none!important;}
-.stTextInput input,.stTextArea textarea,.stSelectbox>div>div{background:var(--bg2)!important;border:1px solid var(--border2)!important;border-radius:var(--r)!important;color:var(--txt0)!important;font-family:var(--font)!important;font-size:.9rem!important;}
-.stTextInput input:focus,.stTextArea textarea:focus{border-color:var(--accent)!important;box-shadow:0 0 0 3px rgba(79,142,247,.15)!important;}
-.stTextInput label,.stTextArea label,.stSelectbox label,.stFileUploader label{color:var(--txt1)!important;font-size:.82rem!important;font-weight:500!important;}
-.stSuccess>div{background:rgba(52,211,153,.1)!important;border:1px solid rgba(52,211,153,.3)!important;border-radius:var(--r)!important;}
-.stError>div{background:rgba(248,113,113,.1)!important;border:1px solid rgba(248,113,113,.3)!important;border-radius:var(--r)!important;}
-.stInfo>div{background:rgba(79,142,247,.1)!important;border:1px solid rgba(79,142,247,.3)!important;border-radius:var(--r)!important;}
-.stWarning>div{background:rgba(251,191,36,.1)!important;border:1px solid rgba(251,191,36,.3)!important;border-radius:var(--r)!important;}
-[data-testid="stFileUploader"]>div{background:var(--bg2)!important;border:1.5px dashed var(--border2)!important;border-radius:var(--r)!important;}
-.streamlit-expanderHeader{background:var(--bg2)!important;border:1px solid var(--border)!important;border-radius:var(--r)!important;color:var(--txt1)!important;}
-
-.ph{margin-bottom:1.5rem;}.ph h1{font-size:1.75rem!important;font-weight:800!important;color:var(--txt0)!important;margin:0 0 .15rem!important;letter-spacing:-.02em;}.ph-sub{color:var(--txt1);font-size:.86rem;}
-.mc-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:.75rem;margin-bottom:.75rem;}
-.mc{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r2);padding:1.2rem 1.3rem;transition:transform .2s,box-shadow .2s;}
-.mc:hover{transform:translateY(-2px);box-shadow:0 6px 24px rgba(0,0,0,.3);}
-.mc-label{font-size:.72rem;font-weight:600;color:var(--txt2);text-transform:uppercase;letter-spacing:.08em;margin-bottom:.4rem;}
-.mc-value{font-size:1.5rem;font-weight:800;font-family:var(--mono);color:var(--txt0);}
-.prog-wrap{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r2);padding:1.3rem 1.4rem;margin:.25rem 0 1.25rem;}
-.prog-head{display:flex;justify-content:space-between;color:var(--txt1);font-size:.83rem;margin-bottom:.65rem;}
-.prog-head strong{color:var(--txt0);font-family:var(--mono);}
-.prog-bg{height:9px;background:var(--bg0);border-radius:100px;overflow:hidden;}
-.prog-fill{height:100%;border-radius:100px;transition:width 1.2s cubic-bezier(.4,0,.2,1);}
-.prog-msg{margin-top:.65rem;font-size:.82rem;color:var(--txt1);text-align:center;}
-.av{background:var(--bg2);border-radius:var(--r);padding:1rem 1.3rem;margin-bottom:.6rem;border-left:3px solid var(--accent);transition:transform .15s;}
-.av:hover{transform:translateX(4px);}
-.av-title{font-weight:700;font-size:.93rem;margin-bottom:.25rem;}
-.av-body{color:var(--txt1);font-size:.85rem;line-height:1.5;}
-.av-date{margin-top:.4rem;font-size:.73rem;color:var(--txt2);}
-.login-wrap{max-width:400px;margin:1.5rem auto;padding:0 .5rem;}
-.login-card{background:var(--bg1);border:1px solid var(--border2);border-radius:22px;padding:2.2rem 2rem 1.8rem;box-shadow:0 20px 60px rgba(0,0,0,.5);}
-.login-logo{text-align:center;margin-bottom:1.75rem;}
-.login-icon{font-size:2.6rem;display:block;margin-bottom:.4rem;}
-.login-title{font-size:1.6rem!important;font-weight:800!important;color:var(--txt0)!important;letter-spacing:-.03em;margin:0 0 .15rem!important;}
-.login-sub{color:var(--txt1);font-size:.85rem;}
-.ponto-head{display:flex;flex-wrap:wrap;gap:1rem 2rem;align-items:center;background:var(--bg2);border:1px solid var(--border);border-radius:var(--r2);padding:1rem 1.4rem;margin-bottom:1.25rem;}
-.ponto-data{font-size:.9rem;font-weight:600;color:var(--txt1);}
-.pk-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:.6rem;margin-bottom:.5rem;}
-.pk{border-radius:var(--r);padding:.9rem .75rem;text-align:center;border:1px solid var(--border);}
-.pk.done{background:rgba(52,211,153,.07);border-color:rgba(52,211,153,.22);}
-.pk.pend{background:var(--bg2);}
-.pk-lbl{font-size:.7rem;color:var(--txt2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:.3rem;font-weight:600;}
-.pk-time{font-size:1rem;font-weight:700;font-family:var(--mono);color:var(--txt0);}
-.hist-row{display:flex;flex-wrap:wrap;gap:.5rem 1rem;align-items:center;padding:.65rem 1rem;background:var(--bg2);border-radius:var(--r);margin-bottom:.35rem;font-size:.82rem;color:var(--txt1);border:1px solid var(--border);}
-.hist-row b{color:var(--txt0);}
-.doc-card{display:flex;justify-content:space-between;align-items:flex-start;background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:1rem 1.3rem;margin-bottom:.55rem;transition:transform .15s;}
-.doc-card:hover{transform:translateX(3px);}
-.doc-tipo{font-weight:700;font-size:.88rem;display:block;margin-bottom:.18rem;}
-.doc-arq{font-size:.78rem;color:var(--txt1);font-family:var(--mono);}
-.doc-desc{font-size:.76rem;color:var(--txt2);margin-top:.12rem;display:block;}
-.doc-status{font-size:.8rem;font-weight:700;}
-.doc-date{font-size:.73rem;color:var(--txt2);margin-top:.25rem;}
-.wpp-hint{background:rgba(37,211,102,.07);border:1px solid rgba(37,211,102,.2);border-radius:var(--r);padding:.9rem 1.3rem;font-size:.83rem;color:var(--txt1);line-height:1.75;margin:.6rem 0 1.25rem;}
-.wpp-hint strong{color:var(--txt0);}
-
-/* ── Badge ADM ── */
-.sb-adm-badge{font-size:.65rem;font-weight:800;color:#fbbf24;background:rgba(251,191,36,.13);border:1px solid rgba(251,191,36,.28);padding:.12rem .45rem;border-radius:20px;margin-left:.35rem;vertical-align:middle;letter-spacing:.04em;}
-.adm-strip{background:rgba(251,191,36,.07);border:1px solid rgba(251,191,36,.18);border-radius:10px;padding:.4rem .85rem;display:inline-flex;align-items:center;gap:.5rem;font-size:.75rem;color:#fbbf24;font-weight:600;margin-bottom:1rem;}
-
-/* ── Faltas ── */
-.falta-row{display:flex;flex-wrap:wrap;gap:.5rem 1.5rem;align-items:center;padding:.75rem 1.1rem;background:var(--bg2);border-radius:var(--r);margin-bottom:.4rem;border:1px solid var(--border);border-left:3px solid var(--red);}
-.falta-row.just{border-left-color:var(--amber);}
-.falta-data{font-weight:700;font-size:.88rem;color:var(--txt0);flex-shrink:0;}
-.falta-motivo{font-size:.83rem;color:var(--txt1);flex:1;}
-.falta-tag{font-size:.7rem;font-weight:700;padding:.15rem .55rem;border-radius:20px;flex-shrink:0;}
-.falta-tag.sim{background:rgba(251,191,36,.1);color:#fbbf24;border:1px solid rgba(251,191,36,.2);}
-.falta-tag.nao{background:rgba(248,113,113,.1);color:#f87171;border:1px solid rgba(248,113,113,.2);}
-
-/* ── Holerite ── */
-.hol-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r2);padding:1.4rem 1.6rem;margin-bottom:.75rem;position:relative;overflow:hidden;}
-.hol-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,var(--green),#059669);}
-.hol-mes{font-size:.72rem;font-weight:700;color:var(--txt2);text-transform:uppercase;letter-spacing:.08em;margin-bottom:.5rem;}
-.hol-salario{font-size:2rem;font-weight:800;font-family:var(--mono);color:var(--green);letter-spacing:-.02em;}
-.hol-obs{font-size:.82rem;color:var(--txt1);margin-top:.5rem;line-height:1.55;border-top:1px solid var(--border);padding-top:.5rem;}
-.hol-pending{background:rgba(251,191,36,.07);border:1px solid rgba(251,191,36,.2);border-radius:var(--r);padding:.9rem 1.2rem;font-size:.86rem;color:#fbbf24;line-height:1.7;margin-bottom:.6rem;}
-
-/* ── Mobile nav fixo no rodapé ── */
-.mobile-nav{display:none;position:fixed;bottom:0;left:0;right:0;z-index:9999;
-  background:rgba(14,20,32,.97);border-top:1px solid rgba(255,255,255,.12);
-  padding:6px 10px calc(8px + env(safe-area-inset-bottom));
-  backdrop-filter:blur(16px);gap:0;margin:0;}
-
-@media(max-width:768px){
-  [data-testid="stSidebar"]{display:none!important;}
-  [data-testid="collapsedControl"]{display:none!important;}
-  .main .block-container{padding:1rem .85rem 5.5rem!important;margin-left:0!important;}
-  .ph h1{font-size:1.3rem!important;}
-  .mc-grid{grid-template-columns:repeat(2,1fr)!important;}
-  .pk-grid{grid-template-columns:repeat(2,1fr)!important;}
-  .doc-card{flex-direction:column;gap:.4rem;}
-  .mobile-nav{display:flex!important;}
-}
-@media(max-width:480px){
-  .main .block-container{padding:.75rem .6rem 5.5rem!important;}
-  .ph h1{font-size:1.15rem!important;}
-  .mc-grid{grid-template-columns:1fr!important;gap:.5rem!important;}
-  .pk-grid{grid-template-columns:1fr 1fr!important;}
-  .login-card{padding:1.5rem 1.2rem;border-radius:18px;}
-  .login-title{font-size:1.35rem!important;}
-}
-</style>
-""", unsafe_allow_html=True)
-
-
-# ══════════════════════════════════════════════════════════════
-# BANCO DE DADOS LOCAL (ponto + documentos + avisos)
-# Autenticação é feita via Google Sheets; não armazenamos senhas localmente
-# ══════════════════════════════════════════════════════════════
-def get_conn(): return sqlite3.connect(DB_PATH, check_same_thread=False)
-
-def init_db():
-    conn=get_conn(); c=conn.cursor()
-    c.execute("""CREATE TABLE IF NOT EXISTS ponto(
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        usuario_nome TEXT NOT NULL, data TEXT NOT NULL,
-        entrada TEXT, saida_almoco TEXT, retorno_almoco TEXT,
-        saida_cafe TEXT, retorno_cafe TEXT, saida TEXT)""")
-    c.execute("""CREATE TABLE IF NOT EXISTS documentos(
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        usuario_nome TEXT NOT NULL, tipo TEXT NOT NULL,
-        descricao TEXT, arquivo_nome TEXT,
-        status TEXT DEFAULT 'enviado',
-        criado_em TEXT DEFAULT CURRENT_TIMESTAMP)""")
-    c.execute("""CREATE TABLE IF NOT EXISTS avisos(
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        titulo TEXT NOT NULL, corpo TEXT NOT NULL,
-        tipo TEXT DEFAULT 'info',
-        criado_em TEXT DEFAULT CURRENT_TIMESTAMP,
-        ativo INTEGER DEFAULT 1)""")
-    c.execute("INSERT OR IGNORE INTO avisos(id,titulo,corpo,tipo) VALUES(1,'🎉 Reunião Mensal','Reunião de alinhamento na sexta-feira às 14h na sala de reuniões.','info')")
-    c.execute("INSERT OR IGNORE INTO avisos(id,titulo,corpo,tipo) VALUES(2,'⚠️ Prazo de Metas','O fechamento do mês ocorre dia 30. Atenção ao cumprimento das metas!','warning')")
-    conn.commit(); conn.close()
-
-def db_get_avisos():
-    conn=get_conn(); c=conn.cursor()
-    c.execute("SELECT titulo,corpo,tipo,criado_em FROM avisos WHERE ativo=1 ORDER BY criado_em DESC LIMIT 5")
-    rows=c.fetchall(); conn.close()
-    return [dict(zip(["titulo","corpo","tipo","criado_em"],r)) for r in rows]
-
-def db_get_ponto_hoje(nome):
-    conn=get_conn(); c=conn.cursor()
-    c.execute("SELECT * FROM ponto WHERE usuario_nome=? AND data=?",(nome,date.today().isoformat()))
-    row=c.fetchone(); conn.close()
-    if row: return dict(zip(["id","usuario_nome","data","entrada","saida_almoco","retorno_almoco","saida_cafe","retorno_cafe","saida"],row))
-    return None
-
-def db_registrar_ponto(nome,campo):
-    conn=get_conn(); c=conn.cursor()
-    hoje=date.today().isoformat(); agora=datetime.now().strftime("%H:%M:%S")
-    if db_get_ponto_hoje(nome):
-        c.execute(f"UPDATE ponto SET {campo}=? WHERE usuario_nome=? AND data=?",(agora,nome,hoje))
-    else:
-        c.execute(f"INSERT INTO ponto(usuario_nome,data,{campo}) VALUES(?,?,?)",(nome,hoje,agora))
-    conn.commit(); conn.close(); return agora
-
-def db_historico_ponto(nome,limit=10):
-    conn=get_conn(); c=conn.cursor()
-    c.execute("SELECT * FROM ponto WHERE usuario_nome=? ORDER BY data DESC LIMIT ?",(nome,limit))
-    rows=c.fetchall(); conn.close()
-    return [dict(zip(["id","usuario_nome","data","entrada","saida_almoco","retorno_almoco","saida_cafe","retorno_cafe","saida"],r)) for r in rows]
-
-def db_salvar_doc(nome,tipo,descricao,arquivo_nome):
-    conn=get_conn(); c=conn.cursor()
-    c.execute("INSERT INTO documentos(usuario_nome,tipo,descricao,arquivo_nome) VALUES(?,?,?,?)",(nome,tipo,descricao,arquivo_nome))
-    conn.commit(); conn.close()
-
-def db_get_docs(nome):
-    conn=get_conn(); c=conn.cursor()
-    c.execute("SELECT * FROM documentos WHERE usuario_nome=? ORDER BY criado_em DESC",(nome,))
-    rows=c.fetchall(); conn.close()
-    return [dict(zip(["id","usuario_nome","tipo","descricao","arquivo_nome","status","criado_em"],r)) for r in rows]
-
-init_db()
-
-
-# ══════════════════════════════════════════════════════════════
-# SESSION STATE
-# ══════════════════════════════════════════════════════════════
-for k,v in [("logged_in",False),("user",None),("nivel","user"),("page","dashboard")]:
-    if k not in st.session_state: st.session_state[k]=v
-
-# ══════════════════════════════════════════════════════════════
-# 🔒 BLOQUEIO — layout estiloso com relógio em tempo real
-# ══════════════════════════════════════════════════════════════
-def render_bloqueio(motivo, prox):
-    now = agora_local()
-    dia_nome = DIAS_PT[now.weekday()]
-    h_seg=f"{HORARIO_SEG_SEX[0]:02d}:{HORARIO_SEG_SEX[1]:02d} – {HORARIO_SEG_SEX[2]:02d}:{HORARIO_SEG_SEX[3]:02d}"
-    h_sab=f"{HORARIO_SAB[0]:02d}:{HORARIO_SAB[1]:02d} – {HORARIO_SAB[2]:02d}:{HORARIO_SAB[3]:02d}"
-    emoji,titulo,sub = {
-        "domingo": ("😴","Domingo — Portal Fechado","Aproveite o descanso! O portal não funciona aos domingos."),
-        "antes":   ("🌅","Ainda não é hora!",f"O expediente começa {prox}. Aguarde um pouco!"),
-        "depois":  ("🌙","Expediente Encerrado","O período de hoje foi encerrado. Até a próxima!"),
-    }.get(motivo,("🔒","Portal Indisponível","Fora do horário de funcionamento."))
-
-    st.markdown(f"""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&family=DM+Mono:wght@700&display=swap');
-html,body,[class*="css"]{{background:#06080f!important;font-family:'Plus Jakarta Sans',sans-serif!important;color:#f0f4ff!important;}}
-#MainMenu,footer,header{{visibility:hidden;}}
-.stDeployButton,[data-testid="stToolbar"]{{display:none!important;}}
-.blk{{min-height:95vh;display:flex;flex-direction:column;align-items:center;justify-content:center;
-  background:radial-gradient(ellipse 90% 50% at 50% 0%,rgba(248,113,113,.1) 0%,transparent 65%),
-             radial-gradient(ellipse 60% 35% at 50% 100%,rgba(79,142,247,.04) 0%,transparent 60%),#06080f;
-  padding:2rem 1rem;}}
-.blk-card{{max-width:460px;width:100%;
-  background:linear-gradient(145deg,#100808,#0c1220);
-  border:1px solid rgba(248,113,113,.2);border-radius:28px;
-  padding:2.75rem 2.5rem 2.25rem;text-align:center;position:relative;overflow:hidden;
-  box-shadow:0 0 0 1px rgba(248,113,113,.06),0 32px 80px rgba(0,0,0,.65),inset 0 1px 0 rgba(255,255,255,.04);}}
-.blk-card::before{{content:'';position:absolute;top:-100px;left:50%;transform:translateX(-50%);
-  width:350px;height:350px;border-radius:50%;
-  background:radial-gradient(circle,rgba(248,113,113,.08) 0%,transparent 70%);pointer-events:none;}}
-.blk-badge{{display:inline-flex;align-items:center;gap:6px;background:rgba(248,113,113,.1);
-  border:1px solid rgba(248,113,113,.22);color:#f87171;font-size:.72rem;font-weight:700;
-  padding:.28rem .85rem;border-radius:20px;letter-spacing:.07em;text-transform:uppercase;margin-bottom:1.5rem;}}
-.blk-emoji{{font-size:3.8rem;display:block;margin-bottom:.75rem;line-height:1;}}
-.blk-title{{font-size:1.65rem;font-weight:800;color:#f0f4ff;letter-spacing:-.03em;margin-bottom:.5rem;line-height:1.2;}}
-.blk-sub{{color:#8b9ab8;font-size:.9rem;line-height:1.65;margin-bottom:.5rem;}}
-.blk-day{{color:#4a5568;font-size:.78rem;margin-bottom:1.5rem;}}
-.blk-prox{{background:rgba(79,142,247,.07);border:1px solid rgba(79,142,247,.16);
-  border-radius:14px;padding:.9rem 1.3rem;margin-bottom:1.5rem;font-size:.86rem;color:#8b9ab8;line-height:1.8;}}
-.blk-prox strong{{color:#7eb3ff;font-size:1rem;}}
-.blk-table{{background:#0d1118;border:1px solid rgba(255,255,255,.07);border-radius:14px;padding:1rem 1.4rem;text-align:left;font-size:.84rem;color:#8b9ab8;}}
-.blk-table-title{{font-size:.72rem;font-weight:700;color:#4a5568;text-transform:uppercase;letter-spacing:.08em;display:block;margin-bottom:.7rem;}}
-.blk-row{{display:flex;justify-content:space-between;align-items:center;padding:.3rem 0;border-bottom:1px solid rgba(255,255,255,.04);}}
-.blk-row:last-child{{border-bottom:none;}}
-.blk-row-v{{font-family:'DM Mono',monospace;font-size:.82rem;color:#7eb3ff;}}
-.blk-closed{{color:#f87171!important;}}
-.blk-footer{{margin-top:1.75rem;color:#2d3748;font-size:.74rem;}}
-</style>
-<div class="blk">
-<div class="blk-card">
-  <div class="blk-badge">🔒 Portal Indisponível</div>
-  <span class="blk-emoji">{emoji}</span>
-  <div class="blk-title">{titulo}</div>
-  <div class="blk-sub">{sub}</div>
-""", unsafe_allow_html=True)
-
-    # Relógio em tempo real — injetado no DOM principal, não em iframe
-    st.markdown(clock_bloqueio_html(), unsafe_allow_html=True)
-
-    st.markdown(f"""
-  <div class="blk-day">{dia_nome} · {now.strftime('%d/%m/%Y')}</div>
-  <div class="blk-prox">🕐 Próxima abertura<br><strong>{prox}</strong></div>
-  <div class="blk-table">
-    <span class="blk-table-title">Horário de Funcionamento</span>
-    <div class="blk-row"><span>Segunda a Sexta</span><span class="blk-row-v">{h_seg}</span></div>
-    <div class="blk-row"><span>Sábado</span><span class="blk-row-v">{h_sab}</span></div>
-    <div class="blk-row"><span>Domingo</span><span class="blk-row-v blk-closed">Fechado</span></div>
-  </div>
-</div>
-<div class="blk-footer">© 2025 {NOME_EMPRESA}</div>
-</div>
-""", unsafe_allow_html=True)
-
-# ══════════════════════════════════════════════════════════════
-# LOGIN — autenticação via Google Sheets
-# ══════════════════════════════════════════════════════════════
-def render_login():
-    st.markdown(clock_login_html(), unsafe_allow_html=True)
-    st.markdown('<div class="login-wrap">', unsafe_allow_html=True)
-    st.markdown(f"""
-<div class="login-card">
-  <div class="login-logo">
-    <span class="login-icon">🏗️</span>
-    <div class="login-title">{NOME_EMPRESA}</div>
-    <div class="login-sub">Acesse sua área de trabalho</div>
-  </div>
-</div>""", unsafe_allow_html=True)
-
-    nome  = st.text_input("Nome", placeholder="Seu nome (igual à planilha)", key="l_nome")
-    senha = st.text_input("Senha", type="password", placeholder="••••••••", key="l_senha")
-
-    if st.button("Entrar →", key="btn_entrar"):
-        if not nome or not senha:
-            st.error("Preencha nome e senha.")
+def login():
+    st.image("https://cdn-icons-png.flaticon.com/512/4090/4090434.png", width=100)
+    st.title("COMSTRUKASA")
+    st.subheader("Madeireira e Materiais para Construção")
+    
+    usuario = st.text_input("Usuário (Senha)")
+    if st.button("Entrar"):
+        if usuario in users:
+            user_info = users[usuario]
+            dentro_horario = verificar_horario()
+            
+            if user_info['tipo'] == 'adm' or dentro_horario:
+                st.session_state.logged_in = True
+                st.session_state.user_data = user_info
+                st.success(f"Bem-vindo(a), {user_info['nome']}!")
+                time.sleep(1)
+                st.rerun()
+            else:
+                st.error("Portal fechado. Horário de acesso: Seg-Sex (07:45-19:00) e Sáb (07:45-13:00).")
         else:
-            user = None
-            if GOOGLE_SHEETS_ID:
-                with st.spinner("Verificando..."):
-                    user = gs_login(nome, senha)
-                if user:
-                    nivel = gs_nivel(user["nome"])
-                    st.session_state.logged_in = True
-                    st.session_state.user      = user
-                    st.session_state.nivel     = nivel
-                    st.rerun()
-                else:
-                    st.error("Nome ou senha incorretos.")
-            else:
-                st.warning("⚠️ Google Sheets não configurado. Adicione `GOOGLE_SHEETS_ID` no topo do app.py e configure as credenciais em `secrets.toml`.")
+            st.error("Usuário não encontrado.")
 
-    # Botão suporte WhatsApp
-    st.markdown(f"""
-<div style="margin-top:1rem;">
-  <a href="{WHATSAPP_SUPORTE}" target="_blank" style="text-decoration:none;display:block;">
-    <button style="width:100%;background:transparent;color:#8b9ab8;
-      border:1px solid rgba(255,255,255,.1);border-radius:12px;
-      padding:.52rem 1rem;font-size:.83rem;font-weight:600;cursor:pointer;
-      display:flex;align-items:center;justify-content:center;gap:8px;
-      font-family:'Plus Jakarta Sans',sans-serif;transition:all .18s;">
-      <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="#25d366">
-        <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
-      </svg>
-      Suporte via WhatsApp
-    </button>
-  </a>
-</div>""", unsafe_allow_html=True)
+def portal_funcionario():
+    user = st.session_state.user_data
+    st.title(f"Olá, {user['nome']} 👋")
+    st.info(f"**Cargo:** {user['cargo']} | **Acesso:** {user['tipo'].upper()}")
 
-    st.markdown('</div>', unsafe_allow_html=True)
-    st.markdown(f'<div style="text-align:center;margin-top:1.1rem;color:#4a5568;font-size:.76rem;">© 2025 {NOME_EMPRESA}</div>', unsafe_allow_html=True)
+    # Abas do Portal
+    tab1, tab2, tab3 = st.tabs(["📊 Meus Dados", "🕒 Ponto Digital", "🛠️ Administração" if user['tipo'] == 'adm' else "📞 Suporte"])
 
+    with tab1:
+        col1, col2 = st.columns(2)
+        col1.metric("Salário Base", user['salario'])
+        if user['cargo'] == "Vendedora":
+            col2.metric("Meta Mensal", user['meta'])
+        else:
+            col2.write("**Informação:** Metas aplicadas apenas ao setor comercial.")
 
-# ══════════════════════════════════════════════════════════════
-# NAVEGAÇÃO MOBILE — botões Streamlit nativos, sem reload
-# ══════════════════════════════════════════════════════════════
-def render_mobile_nav():
-    page  = st.session_state.page
-    items = [("🏠","Dashboard","dashboard"),("🕐","Ponto","ponto"),
-             ("📄","Docs","docs"),("📊","Faltas","faltas"),("💰","Holerite","holerite")]
-    cols  = st.columns(len(items))
-    for col,(icon,label,key) in zip(cols,items):
-        with col:
-            tp = "primary" if page==key else "secondary"
-            if st.button(f"{icon}\n{label}", key=f"mn_{key}", use_container_width=True, type=tp):
-                st.session_state.page=key; st.rerun()
-    st.markdown("""
-<style>
-[data-testid="stHorizontalBlock"]:has([data-testid*="mn_dashboard"]) {
-  display:none;
-}
-}
-@media(max-width:768px){
-  [data-testid="stHorizontalBlock"]:has([data-testid*="mn_dashboard"]) {
-    display:flex!important;
-    position:fixed!important;bottom:0!important;left:0!important;right:0!important;
-    z-index:9999!important;margin:0!important;
-    background:rgba(14,20,32,.97)!important;
-    border-top:1px solid rgba(255,255,255,.12)!important;
-    padding:6px 10px calc(8px + env(safe-area-inset-bottom))!important;
-    backdrop-filter:blur(16px)!important;
-    gap:6px!important;
-  }
-  [data-testid="stHorizontalBlock"]:has([data-testid*="mn_dashboard"]) .stButton>button {
-    border-radius:12px!important;font-size:.72rem!important;
-    padding:.45rem .3rem!important;font-weight:700!important;
-    white-space:pre-wrap!important;line-height:1.3!important;
-  }
-  [data-testid="stHorizontalBlock"]:has([data-testid*="mn_dashboard"]) .stButton>button[kind="primary"] {
-    background:rgba(79,142,247,.18)!important;
-    border:1px solid rgba(79,142,247,.35)!important;
-    color:#7eb3ff!important;box-shadow:none!important;
-  }
-  [data-testid="stHorizontalBlock"]:has([data-testid*="mn_dashboard"]) .stButton>button[kind="secondary"] {
-    background:transparent!important;
-    border:1px solid rgba(255,255,255,.07)!important;
-    color:#4a5568!important;box-shadow:none!important;
-  }
-}
-</style>""", unsafe_allow_html=True)
+    with tab2:
+        st.write("### Registro de Ponto")
+        st.write(f"Horário atual: {datetime.now().strftime('%H:%M:%S')}")
+        if st.button("Registrar Entrada/Saída"):
+            st.toast("Ponto registrado com sucesso!", icon="✅")
 
-# ══════════════════════════════════════════════════════════════
-# PÁGINAS
-# ══════════════════════════════════════════════════════════════
-def render_dashboard(user):
-    st.markdown(clock_bar_html(), unsafe_allow_html=True)
-    st.markdown(f'<div class="ph"><h1>Olá, {user["nome"].split()[0]}! 👋</h1></div>',unsafe_allow_html=True)
-    if not GOOGLE_SHEETS_ID:
-        st.markdown("""<div style="background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.25);
-            border-radius:12px;padding:.7rem 1.2rem;margin-bottom:1rem;font-size:.82rem;color:#8b9ab8;line-height:1.6;">
-            🔗 <strong style="color:#f0f4ff">Google Sheets não configurado.</strong>
-            Edite o topo do app.py e preencha <code style="background:rgba(79,142,247,.12);
-            color:#7eb3ff;padding:.1rem .3rem;border-radius:4px">GOOGLE_SHEETS_ID</code>.
-            </div>""", unsafe_allow_html=True)
-    st.markdown("#### 🎯 Meta do Mês")
-    ma=float(user.get("meta_atual") or 0);mt=float(user.get("meta_total") or 10000)
-    pct=min(int((ma/mt)*100),100) if mt>0 else 0
-    cor="#34d399" if pct>=80 else "#fbbf24" if pct>=50 else "#f87171"
-    restante=max(mt-ma,0)
-    msg="🔥 Excelente! Quase lá!" if pct>=80 else "💪 No caminho certo!" if pct>=50 else "🚀 Vamos acelerar!"
-    st.markdown(f"""
-<div class="mc-grid">
-  <div class="mc"><div class="mc-label">Vendido</div><div class="mc-value" style="color:{cor}">R$ {ma:,.2f}</div></div>
-  <div class="mc"><div class="mc-label">Meta Total</div><div class="mc-value">R$ {mt:,.2f}</div></div>
-  <div class="mc"><div class="mc-label">Falta</div><div class="mc-value" style="color:#fbbf24">R$ {restante:,.2f}</div></div>
-</div>
-<div class="prog-wrap">
-  <div class="prog-head"><span>Progresso</span><strong>{pct}%</strong></div>
-  <div class="prog-bg"><div class="prog-fill" style="width:{pct}%;background:{cor};box-shadow:0 0 10px {cor}55"></div></div>
-  <div class="prog-msg">{msg}</div>
-</div>""", unsafe_allow_html=True)
-    st.markdown("#### 📢 Avisos")
-    for av in db_get_avisos():
-        ca="#4f8ef7" if av["tipo"]=="info" else "#fbbf24" if av["tipo"]=="warning" else "#f87171"
-        st.markdown(f'<div class="av" style="border-left-color:{ca}"><div class="av-title">{av["titulo"]}</div><div class="av-body">{av["corpo"]}</div><div class="av-date">🕐 {av["criado_em"][:10]}</div></div>',unsafe_allow_html=True)
+    with tab3:
+        if user['tipo'] == 'adm':
+            st.write("### Painel Geral (Acesso Restrito)")
+            st.table(users)
+        else:
+            st.write("### Precisa de ajuda?")
+            link_whatsapp = "https://wa.me/5541999013074?text=Olá,%20preciso%20de%20suporte%20no%20portal%20COMSTRUKASA"
+            st.markdown(f'''
+                <a href="{link_whatsapp}" target="_blank">
+                    <button style="background-color: #25D366; color: white; border: none; padding: 10px 20px; border-radius: 10px; cursor: pointer; width: 100%;">
+                        Falar com Suporte no WhatsApp
+                    </button>
+                </a>
+            ''', unsafe_allow_html=True)
 
-def render_ponto(user):
-    st.markdown(clock_bar_html(), unsafe_allow_html=True)
-    st.markdown('<div class="ph"><h1>🕐 Registro de Ponto</h1><div class="ph-sub">Registre seus horários de trabalho</div></div>',unsafe_allow_html=True)
-    hoje=date.today();ponto=db_get_ponto_hoje(user["id"])
-    col_d,col_h=st.columns(2)
-    with col_d:
-        st.markdown(f'<div class="ponto-head"><span class="ponto-data">📅 {hoje.strftime("%d/%m/%Y")}</span></div>',unsafe_allow_html=True)
-    with col_h:
-        st.markdown(clock_ponto_html(), unsafe_allow_html=True)
-    st.markdown("#### Marcações de hoje")
-    cards="<div class='pk-grid'>"
-    for campo,label,_ in CAMPOS_PONTO:
-        h=ponto.get(campo) if ponto else None
-        cards+=f'<div class="pk {"done" if h else "pend"}"><div class="pk-lbl">{label}</div><div class="pk-time">{"✅ "+h if h else "—"}</div></div>'
-    st.markdown(cards+"</div>",unsafe_allow_html=True)
-    st.markdown("#### Registrar")
-    c1,c2,c3=st.columns(3);cm=[c1,c2,c3,c1,c2,c3]
-    for i,(campo,label,btn) in enumerate(CAMPOS_PONTO):
-        h=ponto.get(campo) if ponto else None
-        if not h:
-            ok=True
-            if i>0: ok=bool(ponto.get(CAMPOS_PONTO[i-1][0])) if ponto else False
-            with cm[i]:
-                if st.button(btn,key=f"ponto_{campo}",disabled=not ok):
-                    hr=db_registrar_ponto(user["id"],campo);st.success(f"{label} às {hr}");st.rerun()
-    st.markdown("<br>",unsafe_allow_html=True)
-    with st.expander("📋 Histórico de ponto"):
-        hist=db_historico_ponto(user["id"])
-        if not hist: st.info("Nenhum registro.")
-        for reg in hist:
-            mc="  ".join(f"{ic} {h or '—'}" for ic,h in [("🟢",reg["entrada"]),("🍽️",reg["saida_almoco"]),
-                ("↩️",reg["retorno_almoco"]),("☕",reg["saida_cafe"]),("↩️",reg["retorno_cafe"]),("🔴",reg["saida"])])
-            st.markdown(f'<div class="hist-row"><b>📅 {reg["data"]}</b><span style="font-family:var(--mono);font-size:.79rem"> {mc}</span></div>',unsafe_allow_html=True)
+    if st.button("Sair"):
+        st.session_state.logged_in = False
+        st.rerun()
 
-def render_documentos(user):
-    st.markdown(clock_bar_html(), unsafe_allow_html=True)
-    st.markdown('<div class="ph"><h1>📄 Envio de Documentos</h1><div class="ph-sub">Envie atestados e documentos para o RH</div></div>',unsafe_allow_html=True)
-    st.markdown("#### 📤 Novo Documento")
-    tipo=st.selectbox("Tipo de Documento",TIPOS_DOC,key="doc_tipo")
-    descricao=st.text_area("Descrição (opcional)",placeholder="Ex: Atestado médico do dia 10/01...",key="doc_desc")
-    arquivo=st.file_uploader("Selecione o arquivo",type=["pdf","jpg","jpeg","png","doc","docx"],key="doc_arq")
-    c1,c2=st.columns(2)
-    with c1:
-        if st.button("💾 Salvar no Portal",key="btn_salvar"):
-            if not arquivo: st.error("Selecione um arquivo.")
-            else:
-                pasta=f"docs_enviados/{user['id']}";os.makedirs(pasta,exist_ok=True)
-                with open(f"{pasta}/{arquivo.name}","wb") as f: f.write(arquivo.getbuffer())
-                db_salvar_doc(user["id"],tipo,descricao,arquivo.name);st.success("✅ Documento salvo!");st.rerun()
-    with c2:
-        st.markdown(f"""<a href="{WHATSAPP_LINK}" target="_blank" style="text-decoration:none;display:block;margin-top:.12rem">
-<button style="width:100%;background:#25d366;color:white;border:none;border-radius:12px;padding:.56rem .8rem;
-  font-size:.88rem;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px;
-  font-family:'Plus Jakarta Sans',sans-serif;box-shadow:0 3px 14px rgba(37,211,102,.28);">
-<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="white">
-<path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
-Enviar pelo WhatsApp</button></a>""", unsafe_allow_html=True)
-    st.markdown('<div class="wpp-hint">💡 <strong>Como usar:</strong><br>1. Preencha e clique em <strong>Salvar no Portal</strong><br>2. Clique em <strong>Enviar pelo WhatsApp</strong> e anexe o arquivo</div>',unsafe_allow_html=True)
-    st.markdown("#### 📋 Documentos Enviados")
-    docs=db_get_docs(user["id"])
-    if not docs: st.info("Nenhum documento enviado ainda.")
-    for doc in docs:
-        cs="#34d399" if doc["status"]=="aprovado" else "#fbbf24" if doc["status"]=="enviado" else "#f87171"
-        ic="✅" if doc["status"]=="aprovado" else "⏳" if doc["status"]=="enviado" else "❌"
-        st.markdown(f'<div class="doc-card"><div><span class="doc-tipo">📄 {doc["tipo"]}</span><span class="doc-arq">{doc["arquivo_nome"] or "—"}</span><span class="doc-desc">{doc["descricao"] or ""}</span></div><div style="text-align:right;flex-shrink:0;margin-left:1rem"><div class="doc-status" style="color:{cs}">{ic} {doc["status"].capitalize()}</div><div class="doc-date">🕐 {doc["criado_em"][:10]}</div></div></div>',unsafe_allow_html=True)
-
-# ══════════════════════════════════════════════════════════════
-# ROTEAMENTO PRINCIPAL
-# ══════════════════════════════════════════════════════════════
-
-# 1️⃣ Verifica horário
-permitido,motivo,prox = verificar_horario()
-if not permitido:
-    render_bloqueio(motivo,prox); st.stop()
-
-# 2️⃣ Login
+# Controle de Navegação
 if not st.session_state.logged_in:
-    render_login(); st.stop()
-
-# 3️⃣ App autenticado
-user = st.session_state.user
-
-# Sidebar desktop
-with st.sidebar:
-    st.markdown(f"""
-<div class="sb-top">
-  <div class="sb-av">{user['nome'][0].upper()}</div>
-  <div class="sb-name">{user['nome']}</div>
-  <div class="sb-role">{user['cargo']}</div>
-</div>""", unsafe_allow_html=True)
-    st.markdown(clock_sidebar_html(), unsafe_allow_html=True)
-    PM={"dashboard":"🏠  Dashboard","ponto":"🕐  Ponto","docs":"📄  Documentos"}
-    PMR={v:k for k,v in PM.items()}
-    cur=PM.get(st.session_state.page,"🏠  Dashboard")
-    labels=list(PM.values())
-    sel=st.radio("",labels,label_visibility="collapsed",key="nav",
-                 index=labels.index(cur) if cur in labels else 0)
-    st.session_state.page=PMR[sel]
-    st.markdown("<br>"*5,unsafe_allow_html=True)
-    st.markdown('<div class="btn-logout">',unsafe_allow_html=True)
-    if st.button("Sair",key="logout"):
-        st.session_state.logged_in=False;st.session_state.user=None;st.rerun()
-    st.markdown('</div>',unsafe_allow_html=True)
-
-# Bottom nav mobile
-render_mobile_nav()
-
-# Renderiza página
-p=st.session_state.page
-if p=="dashboard": render_dashboard(user)
-elif p=="ponto":   render_ponto(user)
-elif p=="docs":    render_documentos(user)
+    login()
+else:
+    portal_funcionario()
